@@ -1,0 +1,23 @@
+[project]
+name = "excel2img-all"
+version = "0.1.0"
+description = "Export every sheet from glob-selected Excel workbooks to PNG"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "Pillow>=11.3,<13",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.scripts]
+excel2img-all = "excel2img_all:main"
+
+[project.urls]
+Repository = "https://github.com/cmsong-shina/excel2img-all"
+Upstream = "https://github.com/glexey/excel2img"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12"]
+build-backend = "uv_build"
