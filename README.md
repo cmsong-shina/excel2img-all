@@ -1,8 +1,10 @@
 # excel2img-all
 
-> [!NOTE] This codes written by AI.
+> [!NOTE]
+> This codes written by AI.
 
-> [!IMPORTANT] This only works on Windows with desktop Microsoft Excel installed.
+> [!IMPORTANT]
+> This only works on Windows with desktop Microsoft Excel installed.
 
 Export every sheet from Excel workbooks to PNG.
 

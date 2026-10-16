@@ -32,6 +32,41 @@ NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 EXTENSIONS = {".xlsx", ".xlsm", ".xlsb", ".xls"}
 CLIPBOARD_MUTEX = r"Local\excel2img.capture.v1"
+ANSI_COLORS = {"info": 36, "success": 32, "warning": 33, "error": 31}
+
+
+def stdout_supports_color() -> bool:
+    if not sys.stdout.isatty():
+        return False
+    if sys.platform != "win32":
+        return True
+
+    # Windows consoles need virtual-terminal processing to interpret ANSI colors.
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    try:
+        handle = msvcrt.get_osfhandle(sys.stdout.fileno())
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        enable_virtual_terminal_processing = 0x0004
+        return bool(mode.value & enable_virtual_terminal_processing or kernel32.SetConsoleMode(
+            handle, mode.value | enable_virtual_terminal_processing))
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def print_status(message: str, style: str = "info", *, flush: bool = False):
+    if stdout_supports_color():
+        message = f"\033[{ANSI_COLORS[style]}m{message}\033[0m"
+    print(message, flush=flush)
 
 
 @dataclass(frozen=True)
@@ -294,7 +329,7 @@ def capture_range(app, sheet, address: str, job: Job):
         except (OSError, pywintypes.error, pywintypes.com_error) as exc:
             if attempt == job.retries:
                 raise
-            print(f"Retry [{Path(job.source).name}/{sheet.Name}] {attempt + 1}/{job.retries}: {exc}", flush=True)
+            print_status(f"Retry [{Path(job.source).name}/{sheet.Name}] {attempt + 1}/{job.retries}: {exc}", "warning", flush=True)
             time.sleep(0.5 * attempt)
 
 
@@ -345,7 +380,7 @@ def export_workbook(job: Job) -> dict:
                 elif sheet.Type == -4167:  # xlWorksheet
                     sheet.Visible = -1
                     address = ranges.get(name) or str(sheet.UsedRange.Address)
-                    print(f"Exporting [{source.name}/{name}!{address}] ...", flush=True)
+                    print_status(f"Exporting [{source.name}/{name}!{address}] ...", flush=True)
                     image = capture_range(app, sheet, address, job)
                     try:
                         detail = f"{address}, {image.width} x {image.height}"
@@ -355,13 +390,13 @@ def export_workbook(job: Job) -> dict:
                 else:
                     raise ValueError(f"Unsupported Excel sheet type: {sheet.Type}")
                 report["saved"] += 1
-                print(f"Saved [{source.name}]: {destination} ({detail})", flush=True)
+                print_status(f"Saved [{source.name}]: {destination} ({detail})", "success", flush=True)
             except Exception as exc:
                 report["errors"].append(f"{name}: {exc}")
-                print(f"Failed [{source.name}/{name}]: {exc}", file=sys.stderr, flush=True)
+                print_status(f"Failed [{source.name}/{name}]: {exc}", "error", flush=True)
     except Exception as exc:
         report["errors"].append(str(exc))
-        print(f"Failed [{source.name}]: {exc}", file=sys.stderr, flush=True)
+        print_status(f"Failed [{source.name}]: {exc}", "error", flush=True)
     finally:
         try:
             if workbook is not None:
@@ -412,12 +447,12 @@ def main(argv: list[str] | None = None) -> int:
         outputs = output_paths(files, root)
         if args.dry_run:
             for source in files:
-                print(f"{source} -> {outputs[source]}")
+                print_status(f"{source} -> {outputs[source]}")
                 ranges = ooxml_ranges(source)
                 for name, address in ranges.items():
-                    print(f"  {name}: {address}")
+                    print_status(f"  {name}: {address}")
                 if not ranges:
-                    print("  Excel UsedRange / chart sheet export")
+                    print_status("  Excel UsedRange / chart sheet export")
             return 0
         if sys.platform != "win32":
             parser.error("Export requires Windows and installed desktop Microsoft Excel; --dry-run works elsewhere")
@@ -428,11 +463,12 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError as exc:
             parser.error(f"Missing dependency ({exc}); run with uv run or uvx as described in the README")
         jobs = [Job(str(p), str(outputs[p]), args.gridlines, args.zoom, args.retries, args.clipboard_timeout) for p in files]
-        print(f"Exporting {len(jobs)} workbook(s) sequentially.", flush=True)
+        print_status(f"Exporting {len(jobs)} workbook(s) sequentially.", flush=True)
         reports = [export_workbook(job) for job in jobs]
         saved = sum(report["saved"] for report in reports)
         failures = sum(len(report["errors"]) for report in reports)
-        print(f"Finished: {len(reports)} workbook(s), {saved} image(s) saved, {failures} error(s).")
+        print_status(f"Finished: {len(reports)} workbook(s), {saved} image(s) saved, {failures} error(s).",
+                     "error" if failures else "success")
         return 1 if failures else 0
     except (OSError, ValueError, BadZipFile, ET.ParseError, KeyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
